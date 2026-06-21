@@ -1,5 +1,6 @@
 import type { Vault } from "obsidian";
 import { TFile, normalizePath } from "obsidian";
+import { shouldSkipAutoRenamedPath } from "../lib/autoRenamedDuplicate";
 import { hashBuffer } from "../lib/hash";
 import { matchesIgnore, normalizeVaultPath, parentPath } from "../lib/path";
 import type { AliyunSyncSettings, LocalAdapter, LocalEntry, SyncEntity } from "../types";
@@ -21,7 +22,7 @@ export class LocalVaultAdapter implements LocalAdapter {
     const files = this.vault.getFiles();
     const entries: LocalEntry[] = [];
     for (const file of files) {
-      if (!this.shouldInclude(file.path)) {
+      if (!this.shouldInclude(file.path) || this.isAutoRenamedDuplicate(file.path)) {
         continue;
       }
       const content = await this.vault.adapter.readBinary(file.path);
@@ -104,6 +105,9 @@ export class LocalVaultAdapter implements LocalAdapter {
     const entries: LocalEntry[] = [];
     for (const filePath of listed.files) {
       const clean = normalizeVaultPath(filePath);
+      if (this.isAutoRenamedDuplicate(clean)) {
+        continue;
+      }
       const stat = await this.vault.adapter.stat(clean);
       const data = await this.vault.adapter.readBinary(clean);
       entries.push({
@@ -115,6 +119,9 @@ export class LocalVaultAdapter implements LocalAdapter {
       });
     }
     for (const folderPath of listed.folders) {
+      if (this.isAutoRenamedDuplicate(folderPath)) {
+        continue;
+      }
       entries.push(...(await this.listAdapterFolder(folderPath)));
     }
     return entries;
@@ -138,6 +145,10 @@ export class LocalVaultAdapter implements LocalAdapter {
         await this.vault.adapter.mkdir(normalized);
       }
     }
+  }
+
+  private isAutoRenamedDuplicate(path: string): boolean {
+    return shouldSkipAutoRenamedPath(path, (candidate) => this.vault.getAbstractFileByPath(candidate) !== null);
   }
 }
 

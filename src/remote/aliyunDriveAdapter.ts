@@ -1,4 +1,5 @@
 import { requestUrl } from "obsidian";
+import { hasAutoRenamedSibling } from "../lib/autoRenamedDuplicate";
 import { hashBuffer } from "../lib/hash";
 import { basename, joinRemotePath, normalizeRemoteRoot, normalizeVaultPath, parentPath } from "../lib/path";
 import type { AliyunSyncSettings, AuthState, ConnectivityResult, RemoteAdapter, RemoteEntry, WriteMeta } from "../types";
@@ -52,6 +53,8 @@ export class AliyunDriveAdapter implements RemoteAdapter {
   private queue = new RateLimitQueue(350);
   private driveId?: string;
   private codeVerifier = "";
+  private folderIdCache = new Map<string, string>();
+  private folderEnsureTasks = new Map<string, Promise<string>>();
 
   constructor(
     private readonly getSettings: () => AliyunSyncSettings,
@@ -281,42 +284,68 @@ export class AliyunDriveAdapter implements RemoteAdapter {
     const root = normalizeRemoteRoot(this.getSettings().remoteRootPath);
     const cleanRelative = normalizeVaultPath(relativePath);
     const fullPath = cleanRelative ? joinRemotePath(root, cleanRelative) : root;
+    return this.ensureAbsoluteFolder(fullPath);
+  }
+
+  private async ensureAbsoluteFolder(fullPath: string): Promise<string> {
+    const cleanPath = normalizeRemoteRoot(fullPath);
+    if (cleanPath === "/") {
+      return "root";
+    }
+    const cached = this.folderIdCache.get(cleanPath);
+    if (cached) {
+      return cached;
+    }
+    const running = this.folderEnsureTasks.get(cleanPath);
+    if (running) {
+      return running;
+    }
+    const task = this.createOrFindAbsoluteFolder(cleanPath).finally(() => {
+      this.folderEnsureTasks.delete(cleanPath);
+    });
+    this.folderEnsureTasks.set(cleanPath, task);
+    return task;
+  }
+
+  private async createOrFindAbsoluteFolder(fullPath: string): Promise<string> {
     const existing = await this.getFileInfoByAbsolutePath(fullPath);
     if (existing) {
       if (existing.type !== "folder") {
         throw new Error(`云端路径不是文件夹: ${fullPath}`);
       }
+      this.folderIdCache.set(fullPath, existing.file_id);
       return existing.file_id;
     }
     const parent = parentPath(fullPath);
     const parentId = parent ? await this.ensureAbsoluteFolder(parent) : "root";
     const driveId = await this.getDriveId();
-    const created = await this.api<CreateFileResponse>(API.create, {
-      drive_id: driveId,
-      parent_file_id: parentId,
-      name: basename(fullPath),
-      type: "folder",
-      check_name_mode: "auto_rename"
-    });
+    const created = await this.createFolderWithoutRename(driveId, parentId, fullPath);
+    this.folderIdCache.set(fullPath, created.file_id);
     return created.file_id;
   }
 
-  private async ensureAbsoluteFolder(fullPath: string): Promise<string> {
-    const existing = await this.getFileInfoByAbsolutePath(fullPath);
-    if (existing) {
-      return existing.file_id;
+  private async createFolderWithoutRename(driveId: string, parentId: string, fullPath: string): Promise<CreateFileResponse> {
+    try {
+      return await this.api<CreateFileResponse>(API.create, {
+        drive_id: driveId,
+        parent_file_id: parentId,
+        name: basename(fullPath),
+        type: "folder",
+        check_name_mode: "refuse"
+      });
+    } catch (error) {
+      const existing = await this.getFileInfoByAbsolutePath(fullPath);
+      if (existing?.type === "folder") {
+        return {
+          drive_id: existing.drive_id,
+          file_id: existing.file_id,
+          parent_file_id: existing.parent_file_id ?? parentId,
+          upload_id: "",
+          part_info_list: []
+        };
+      }
+      throw error;
     }
-    const parent = parentPath(fullPath);
-    const parentId = parent ? await this.ensureAbsoluteFolder(parent) : "root";
-    const driveId = await this.getDriveId();
-    const created = await this.api<CreateFileResponse>(API.create, {
-      drive_id: driveId,
-      parent_file_id: parentId,
-      name: basename(fullPath),
-      type: "folder",
-      check_name_mode: "auto_rename"
-    });
-    return created.file_id;
   }
 
   private async listRecursive(basePath: string, parentId: string, out: RemoteEntry[]): Promise<void> {
@@ -331,7 +360,11 @@ export class AliyunDriveAdapter implements RemoteAdapter {
         marker
       });
       marker = result.next_marker ?? "";
-      for (const item of result.items ?? []) {
+      const items = result.items ?? [];
+      for (const item of items) {
+        if (hasAutoRenamedSibling(item, items)) {
+          continue;
+        }
         const childPath = normalizeVaultPath(`${basePath}/${item.name}`);
         const entry = toRemoteEntry(childPath, item);
         out.push(entry);
