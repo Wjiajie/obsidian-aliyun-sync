@@ -1,0 +1,5 @@
+node_modules/
+.goal-loop/
+.obsidian/
+.DS_Store
+npm-debug.log*

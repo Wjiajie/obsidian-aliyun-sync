@@ -1,0 +1,25 @@
+.aliyun-sync-status {
+  color: var(--text-muted);
+}
+
+.aliyun-sync-status.is-syncing {
+  color: var(--text-accent);
+}
+
+.aliyun-sync-warning {
+  color: var(--text-warning);
+}
+
+.aliyun-sync-section-title {
+  margin-top: 1.4em;
+  margin-bottom: 0.35em;
+  color: var(--text-normal);
+  font-size: 1.05em;
+  font-weight: 600;
+}
+
+.aliyun-sync-advanced {
+  border-left: 2px solid var(--background-modifier-border);
+  margin-left: 0.25em;
+  padding-left: 0.9em;
+}

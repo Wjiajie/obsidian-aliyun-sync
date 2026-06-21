@@ -1,0 +1,10 @@
+{
+  "id": "obsidian-aliyun-sync",
+  "name": "Aliyun Drive Sync",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Sync an Obsidian vault to a selected Aliyun Drive cloud folder.",
+  "author": "",
+  "authorUrl": "",
+  "isDesktopOnly": false
+}
