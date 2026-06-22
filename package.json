@@ -14,7 +14,7 @@
     "aliyun",
     "sync"
   ],
-  "author": "",
+  "author": "Wjiajie",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.14.12",
