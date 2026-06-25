@@ -1,6 +1,6 @@
 {
   "name": "aliyun-drive-sync",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Obsidian plugin for syncing a vault to an Aliyun Drive cloud folder.",
   "main": "main.js",
   "scripts": {
