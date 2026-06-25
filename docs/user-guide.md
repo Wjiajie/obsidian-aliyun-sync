@@ -37,7 +37,7 @@ npm run build
 2. 找到你的 Obsidian vault 插件目录：
 
 ```text
-<你的 vault>/.obsidian/plugins/obsidian-aliyun-sync/
+<你的 vault>/.obsidian/plugins/aliyun-drive-sync/
 ```
 
 3. 把以下文件复制进去：

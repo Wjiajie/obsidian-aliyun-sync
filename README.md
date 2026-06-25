@@ -41,7 +41,7 @@ npm run build
 把以下文件复制到你的 vault 插件目录：
 
 ```text
-<你的 vault>/.obsidian/plugins/obsidian-aliyun-sync/
+<你的 vault>/.obsidian/plugins/aliyun-drive-sync/
   main.js
   manifest.json
   styles.css
