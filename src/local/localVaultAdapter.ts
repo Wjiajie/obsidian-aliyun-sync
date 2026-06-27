@@ -1,8 +1,9 @@
-import type { Vault } from "obsidian";
-import { TFile, normalizePath } from "obsidian";
+import type { TFile, Vault } from "obsidian";
+import { normalizePath } from "obsidian";
 import { shouldSkipAutoRenamedPath } from "../lib/autoRenamedDuplicate";
 import { hashBuffer } from "../lib/hash";
 import { matchesIgnore, normalizeVaultPath, parentPath } from "../lib/path";
+import { CONFIG_DIR_TOKEN } from "../settings";
 import type { AliyunSyncSettings, LocalAdapter, LocalEntry, SyncEntity } from "../types";
 
 export class LocalVaultAdapter implements LocalAdapter {
@@ -35,7 +36,7 @@ export class LocalVaultAdapter implements LocalAdapter {
       });
     }
     if (settings.includeObsidianConfig) {
-      const hidden = await this.listAdapterFolder(".obsidian");
+      const hidden = await this.listAdapterFolder(this.configDir());
       for (const entry of hidden) {
         if (!entries.some((existing) => existing.path === entry.path) && this.shouldInclude(entry.path)) {
           entries.push(entry);
@@ -82,10 +83,11 @@ export class LocalVaultAdapter implements LocalAdapter {
   private shouldInclude(path: string): boolean {
     const settings = this.getSettings();
     const clean = normalizeVaultPath(path);
-    if (!settings.includeObsidianConfig && clean.startsWith(".obsidian/")) {
+    const configDir = this.configDir();
+    if (!settings.includeObsidianConfig && clean.startsWith(`${configDir}/`)) {
       return false;
     }
-    if (matchesIgnore(clean, settings.ignorePatterns)) {
+    if (matchesIgnore(clean, this.expandConfigDirPatterns(settings.ignorePatterns))) {
       return false;
     }
     if (settings.syncScopes.length === 0 || settings.syncScopes.includes("/")) {
@@ -149,6 +151,15 @@ export class LocalVaultAdapter implements LocalAdapter {
 
   private isAutoRenamedDuplicate(path: string): boolean {
     return shouldSkipAutoRenamedPath(path, (candidate) => this.vault.getAbstractFileByPath(candidate) !== null);
+  }
+
+  private configDir(): string {
+    return normalizeVaultPath(this.vault.configDir);
+  }
+
+  private expandConfigDirPatterns(patterns: string[]): string[] {
+    const configDir = this.configDir();
+    return patterns.map((pattern) => pattern.split(CONFIG_DIR_TOKEN).join(configDir));
   }
 }
 

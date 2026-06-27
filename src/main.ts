@@ -207,7 +207,7 @@ class AliyunSyncSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "阿里云盘同步" });
+    new Setting(containerEl).setName("阿里云盘同步").setHeading();
     this.addSectionTitle("连接阿里云盘");
 
     new Setting(containerEl)
@@ -309,10 +309,8 @@ class AliyunSyncSettingTab extends PluginSettingTab {
   }
 
   private addSectionTitle(text: string): void {
-    this.containerEl.createEl("h3", {
-      text,
-      cls: "aliyun-sync-section-title"
-    });
+    const section = new Setting(this.containerEl).setName(text).setHeading();
+    section.settingEl.addClass("aliyun-sync-section-title");
   }
 
   private renderAdvancedSettings(containerEl: HTMLElement): void {
@@ -363,7 +361,7 @@ class AliyunSyncSettingTab extends PluginSettingTab {
       );
 
     new Setting(advancedEl)
-      .setName("同步 .obsidian 配置目录")
+      .setName("同步配置目录")
       .setDesc("默认关闭。开启后会同步部分配置文件，但仍会遵守忽略规则。")
       .addToggle((toggle) =>
         toggle

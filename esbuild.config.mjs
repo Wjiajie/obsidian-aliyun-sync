@@ -1,8 +1,14 @@
 import esbuild from "esbuild";
 import process from "process";
-import builtins from "builtin-modules";
+import { builtinModules } from "node:module";
 
 const prod = process.argv[2] === "production";
+const builtins = Array.from(
+  new Set([
+    ...builtinModules,
+    ...builtinModules.map((moduleName) => `node:${moduleName.replace(/^node:/, "")}`)
+  ])
+);
 
 const context = await esbuild.context({
   banner: {

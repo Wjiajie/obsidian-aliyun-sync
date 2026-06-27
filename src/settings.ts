@@ -1,6 +1,8 @@
 import type { AliyunSyncSettings } from "./types";
 import { DEFAULT_OPENLIST_APPS_TYPE, DEFAULT_OPENLIST_RENEW_API } from "./remote/openListAuth";
 
+export const CONFIG_DIR_TOKEN = "${configDir}";
+
 export const DEFAULT_SETTINGS: AliyunSyncSettings = {
   provider: "aliyun-drive",
   clientId: "",
@@ -16,9 +18,9 @@ export const DEFAULT_SETTINGS: AliyunSyncSettings = {
     "*.sync-conflict-*",
     "**/*.sync-conflict-*",
     ".trash/**",
-    ".obsidian/workspace.json",
-    ".obsidian/workspace-mobile.json",
-    ".obsidian/cache/**"
+    `${CONFIG_DIR_TOKEN}/workspace.json`,
+    `${CONFIG_DIR_TOKEN}/workspace-mobile.json`,
+    `${CONFIG_DIR_TOKEN}/cache/**`
   ],
   includeObsidianConfig: false,
   autoSyncOnStartup: true,

@@ -6,12 +6,21 @@ export function normalizeVaultPath(path: string): string {
     if (part === "..") {
       throw new Error(`Invalid path traversal: ${path}`);
     }
-    if (/[\u0000-\u001f]/u.test(part)) {
+    if (hasControlCharacter(part)) {
       throw new Error(`Invalid control character in path: ${path}`);
     }
     out.push(part);
   }
   return out.join("/");
+}
+
+function hasControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    if (value.charCodeAt(index) < 32) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function normalizeRemoteRoot(path: string): string {

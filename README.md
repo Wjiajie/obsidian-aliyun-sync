@@ -1,5 +1,24 @@
 # Obsidian Aliyun Drive Sync
 
+Aliyun Drive Sync keeps a local vault in sync with a selected folder in the personal Aliyun Drive cloud app. It uses the Aliyun Drive open file APIs through an OpenList refresh token flow, so it does not require the Aliyun Drive desktop client or a local mirrored folder.
+
+Core features:
+
+- Two-way sync between local files and an Aliyun Drive cloud folder.
+- Incremental planning based on local state, remote state, sync history, and SHA-1 content hashes.
+- Automatic sync on startup, periodic intervals, and delayed sync after file changes.
+- Progress feedback in the status bar for scanning, planning, upload, download, metadata, and completion phases.
+- Configurable parallel transfers with retry behavior for transient network or rate-limit failures.
+- Conflict handling for Markdown files, with unresolved conflict copies stored inside the plugin metadata folder.
+- Delete protection to prevent unexpected large-scale deletion propagation.
+- Duplicate-folder protection for Aliyun Drive auto-renamed paths such as `Folder(1)` or `Folder(2)`.
+
+Security notes:
+
+- The refresh token is stored only in the local plugin data.
+- The token is not uploaded to the remote sync folder and is not written into logs.
+- Back up important vaults before first use, and use a dedicated remote folder for each vault.
+
 把当前 Obsidian 知识库直接同步到个人阿里云盘 App 里的指定云端文件夹。
 
 这个项目不是把 vault 同步到本地阿里云盘客户端目录，而是通过阿里云盘开放接口读写云端文件。多台设备安装同一个插件、使用同一个阿里云盘账号，并配置同一个云端目录后，可以自动上传本地变更，也可以拉取另一台设备已经同步到云端的更新。
