@@ -1,7 +1,7 @@
 import { decodeText, encodeText } from "../lib/hash";
 import { isMarkdownPath } from "../lib/path";
 import { createConflictArchivePath, mergeMarkdown } from "./conflict";
-import { checkDeleteProtection } from "./deleteProtection";
+import { checkDeleteProtection, checkDownloadProtection } from "./deleteProtection";
 import { operationProgressLabel } from "./progress";
 import type { AliyunSyncSettings, LocalAdapter, RemoteAdapter, SyncOperation, SyncPlan, SyncProgress } from "../types";
 import { SyncJournal } from "./journal";
@@ -25,10 +25,15 @@ export class SyncExecutor {
 
   async execute(plan: SyncPlan): Promise<SyncExecutionResult> {
     const settings = this.getSettings();
-    const totalFiles = Math.max(Object.keys(this.journal.records).length, plan.operations.length);
+    const historyCount = Object.keys(this.journal.records).length;
+    const totalFiles = Math.max(historyCount, plan.operations.length);
     const deleteCheck = checkDeleteProtection(plan.operations, totalFiles, settings);
     if (!deleteCheck.ok) {
       throw new Error(deleteCheck.reason);
+    }
+    const downloadCheck = checkDownloadProtection(plan.operations, totalFiles, historyCount > 0, settings);
+    if (!downloadCheck.ok) {
+      throw new Error(downloadCheck.reason);
     }
 
     const result: SyncExecutionResult = {
@@ -163,6 +168,13 @@ export class SyncExecutor {
         this.journal.markSynced(operation.path, operation.local, operation.remote, operation.base?.baseText, settings.deviceId);
         break;
       case "upload": {
+        if (operation.archiveRemoteBeforeWrite && operation.remote) {
+          const remoteData = await this.remote.read(operation.path);
+          const archivePath = createConflictArchivePath(operation.path, `${settings.deviceName}-remote`);
+          await this.remote.write(archivePath, remoteData, { mtime: operation.remote.mtime });
+          result.conflicts++;
+          result.messages.push(`已保存云端冲突副本: ${archivePath}`);
+        }
         const data = await this.local.read(operation.path);
         const remote = await this.remote.write(operation.path, data, { mtime: operation.local?.mtime ?? Date.now() });
         this.journal.markSynced(operation.path, operation.local, remote, isMarkdownPath(operation.path) ? decodeText(data) : undefined, settings.deviceId);

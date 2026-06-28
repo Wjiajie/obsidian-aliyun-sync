@@ -1,11 +1,14 @@
-import { App, Notice, Plugin, PluginSettingTab, Setting, TAbstractFile } from "obsidian";
+import { App, Notice, Plugin, PluginSettingTab, Setting, TAbstractFile, TFile } from "obsidian";
+import { hashBuffer } from "./lib/hash";
+import { matchesIgnore, normalizeVaultPath } from "./lib/path";
 import { AliyunDriveAdapter } from "./remote/aliyunDriveAdapter";
 import { LocalVaultAdapter } from "./local/localVaultAdapter";
 import { SyncJournal } from "./sync/journal";
 import { SyncOrchestrator } from "./sync/orchestrator";
 import { formatSyncProgress } from "./sync/progress";
+import { DEFAULT_SAVE_SYNC_PATH_LIMIT, shouldRunSaveTriggeredSync } from "./sync/saveTrigger";
 import { DEFAULT_SETTINGS, normalizeSettings } from "./settings";
-import type { AliyunSyncSettings, AuthState, SyncJournalData, SyncProgress } from "./types";
+import type { AliyunSyncSettings, AuthState, SyncJournalData, SyncProgress, SyncRunOptions, SyncTrigger } from "./types";
 
 interface PluginData {
   settings?: Partial<AliyunSyncSettings>;
@@ -20,6 +23,8 @@ export default class AliyunSyncPlugin extends Plugin {
   private orchestrator!: SyncOrchestrator;
   private statusEl?: HTMLElement;
   private saveTimer?: number;
+  private syncing = false;
+  private suppressSaveEventsUntil = 0;
 
   async onload(): Promise<void> {
     await this.loadPluginData();
@@ -50,6 +55,7 @@ export default class AliyunSyncPlugin extends Plugin {
     this.addSettingTab(new AliyunSyncSettingTab(this.app, this));
     this.registerCommands();
     this.registerProtocolHandler();
+    this.suppressSaveEventsUntil = Date.now() + 15_000;
     this.registerAutoSync();
   }
 
@@ -75,11 +81,13 @@ export default class AliyunSyncPlugin extends Plugin {
     this.setStatus(result.message);
   }
 
-  async runSync(trigger: "manual" | "startup" | "interval" | "save"): Promise<void> {
+  async runSync(trigger: SyncTrigger, options: SyncRunOptions = {}): Promise<void> {
     try {
+      this.syncing = true;
+      this.suppressSaveEventsUntil = Date.now() + this.settings.syncOnSaveDebounceSeconds * 1000 + 10_000;
       this.setStatus("正在同步...");
       this.statusEl?.addClass("is-syncing");
-      await this.orchestrator.run(trigger);
+      await this.orchestrator.run(trigger, options);
     } catch (error) {
       const message = messageOf(error);
       if (message.includes("同步正在进行中")) {
@@ -89,6 +97,8 @@ export default class AliyunSyncPlugin extends Plugin {
       new Notice(`同步失败: ${message}`);
       this.setStatus(`同步失败: ${message}`);
     } finally {
+      this.syncing = false;
+      this.suppressSaveEventsUntil = Date.now() + this.settings.syncOnSaveDebounceSeconds * 1000 + 10_000;
       this.statusEl?.removeClass("is-syncing");
     }
   }
@@ -167,18 +177,43 @@ export default class AliyunSyncPlugin extends Plugin {
         )
       );
     }
-    const scheduleSaveSync = (file: TAbstractFile) => {
+    const pendingSavePaths = new Set<string>();
+    const scheduleSaveSync = (file: TAbstractFile, oldPath?: string) => {
+      if (this.syncing || Date.now() < this.suppressSaveEventsUntil) {
+        return;
+      }
       if (this.local.isSuppressingEvents()) {
         return;
       }
       if (!file.path || this.settings.syncOnSaveDebounceSeconds <= 0) {
         return;
       }
+      pendingSavePaths.add(file.path);
+      if (oldPath) {
+        pendingSavePaths.add(oldPath);
+      }
       if (this.saveTimer) {
         window.clearTimeout(this.saveTimer);
       }
       this.saveTimer = window.setTimeout(
-        () => void this.runSync("save"),
+        async () => {
+          const changedPaths = Array.from(pendingSavePaths);
+          pendingSavePaths.clear();
+          const decision = shouldRunSaveTriggeredSync(changedPaths, DEFAULT_SAVE_SYNC_PATH_LIMIT);
+          if (!decision.ok) {
+            this.setStatus(`已跳过保存后自动同步: ${decision.reason}`);
+            return;
+          }
+          const realChangedPaths = await this.filterContentChangedPaths(changedPaths);
+          if (realChangedPaths.length === 0) {
+            this.setStatus("已跳过保存后自动同步: 没有检测到文件内容变化");
+            return;
+          }
+          void this.runSync("save", {
+            changedPaths: realChangedPaths,
+            preferLocalPaths: realChangedPaths
+          });
+        },
         this.settings.syncOnSaveDebounceSeconds * 1000
       );
     };
@@ -186,6 +221,58 @@ export default class AliyunSyncPlugin extends Plugin {
     this.registerEvent(this.app.vault.on("create", scheduleSaveSync));
     this.registerEvent(this.app.vault.on("delete", scheduleSaveSync));
     this.registerEvent(this.app.vault.on("rename", scheduleSaveSync));
+  }
+
+  private async filterContentChangedPaths(paths: string[]): Promise<string[]> {
+    const changed: string[] = [];
+    const seen = new Set<string>();
+    for (const path of paths) {
+      const clean = normalizeVaultPath(path);
+      if (!clean || seen.has(clean) || !this.shouldTrackSavePath(clean)) {
+        continue;
+      }
+      seen.add(clean);
+
+      const record = this.journal.records[clean];
+      const file = this.app.vault.getAbstractFileByPath(clean);
+      if (!file) {
+        if (record?.local) {
+          changed.push(clean);
+        }
+        continue;
+      }
+      if (!(file instanceof TFile)) {
+        continue;
+      }
+      if (!record?.local?.hash) {
+        changed.push(clean);
+        continue;
+      }
+
+      try {
+        const data = await this.app.vault.adapter.readBinary(clean);
+        const currentHash = hashBuffer(data);
+        if (currentHash !== record.local.hash) {
+          changed.push(clean);
+        }
+      } catch {
+        // If Obsidian reported a file event but the file is temporarily unreadable,
+        // avoid turning that noisy event into an upload.
+      }
+    }
+    return changed;
+  }
+
+  private shouldTrackSavePath(path: string): boolean {
+    const clean = normalizeVaultPath(path);
+    const configDir = normalizeVaultPath(this.app.vault.configDir);
+    if (!this.settings.includeObsidianConfig && clean.startsWith(`${configDir}/`)) {
+      return false;
+    }
+    const ignorePatterns = this.settings.ignorePatterns.map((pattern) =>
+      pattern.split("${configDir}").join(configDir)
+    );
+    return !matchesIgnore(clean, ignorePatterns);
   }
 
   private setStatus(text: string): void {
@@ -384,6 +471,18 @@ class AliyunSyncSettingTab extends PluginSettingTab {
       );
 
     new Setting(advancedEl)
+      .setName("同步完成后弹窗")
+      .setDesc("关闭后，同步完成只更新底部状态栏和最近同步记录，不打断写作。失败和登录相关提示仍会弹出。")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.showSyncCompletionNotice)
+          .onChange(async (value) => {
+            this.plugin.settings.showSyncCompletionNotice = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(advancedEl)
       .setName("启动后同步延迟（秒）")
       .setDesc("打开 Obsidian 后等待多久触发第一次同步。0 表示立即触发。")
       .addText((text) =>
@@ -478,6 +577,29 @@ class AliyunSyncSettingTab extends PluginSettingTab {
           .setValue(String(this.plugin.settings.maxDeletePercentage))
           .onChange(async (value) => {
             this.plugin.settings.maxDeletePercentage = Math.min(100, Math.max(1, Number(value) || 1));
+            await this.plugin.saveSettings();
+          })
+      );
+    new Setting(advancedEl)
+      .setName("最大下载数量")
+      .setDesc("已有同步记录的文件被云端批量改写时，超过这个数量会停止同步；云端新增文件不计入。")
+      .addText((text) =>
+        text
+          .setValue(String(this.plugin.settings.maxDownloadCount))
+          .onChange(async (value) => {
+            this.plugin.settings.maxDownloadCount = Math.max(1, Number(value) || 1);
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(advancedEl)
+      .setName("最大下载比例")
+      .setDesc("已有同步记录的文件被云端批量改写时，超过这个比例会停止同步；云端新增文件不计入。")
+      .addText((text) =>
+        text
+          .setValue(String(this.plugin.settings.maxDownloadPercentage))
+          .onChange(async (value) => {
+            this.plugin.settings.maxDownloadPercentage = Math.min(100, Math.max(1, Number(value) || 1));
             await this.plugin.saveSettings();
           })
       );

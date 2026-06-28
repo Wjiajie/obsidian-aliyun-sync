@@ -1,26 +1,29 @@
 import { canMergeMarkdown } from "./conflict";
-import type { AliyunSyncSettings, SyncBaseRecord, SyncEntity, SyncOperation, SyncPlan } from "../types";
+import type { AliyunSyncSettings, SyncBaseRecord, SyncEntity, SyncOperation, SyncPlan, SyncRunOptions } from "../types";
 
 export function buildSyncPlan(
   locals: SyncEntity[],
   remotes: SyncEntity[],
   baseRecords: Record<string, SyncBaseRecord>,
-  settings: Pick<AliyunSyncSettings, "enableDeleteSync" | "markdownMergeSizeLimitBytes" | "initialSyncConflictStrategy">
+  settings: Pick<AliyunSyncSettings, "enableDeleteSync" | "markdownMergeSizeLimitBytes" | "initialSyncConflictStrategy">,
+  options: SyncRunOptions = {}
 ): SyncPlan {
   const localMap = mapByPath(locals);
   const remoteMap = mapByPath(remotes);
-  const paths = new Set<string>([
+  const scopes = normalizedPathSet(options.changedPaths);
+  const preferLocalScopes = normalizedPathSet(options.preferLocalPaths);
+  const paths = Array.from(new Set<string>([
     ...Object.keys(localMap),
     ...Object.keys(remoteMap),
     ...Object.keys(baseRecords)
-  ]);
+  ])).filter((path) => isInScopes(path, scopes));
 
   const operations: SyncOperation[] = [];
-  for (const path of Array.from(paths).sort()) {
+  for (const path of paths.sort()) {
     const local = localMap[path];
     const remote = remoteMap[path];
     const base = baseRecords[path];
-    operations.push(decide(path, local, remote, base, settings));
+    operations.push(decide(path, local, remote, base, settings, preferLocalScopes.length > 0 && isInScopes(path, preferLocalScopes)));
   }
   const filtered = operations.filter((op) => op.kind !== "skip" || op.reason.includes("conflict"));
   return {
@@ -34,7 +37,8 @@ function decide(
   local: SyncEntity | undefined,
   remote: SyncEntity | undefined,
   base: SyncBaseRecord | undefined,
-  settings: Pick<AliyunSyncSettings, "enableDeleteSync" | "markdownMergeSizeLimitBytes" | "initialSyncConflictStrategy">
+  settings: Pick<AliyunSyncSettings, "enableDeleteSync" | "markdownMergeSizeLimitBytes" | "initialSyncConflictStrategy">,
+  preferLocal = false
 ): SyncOperation {
   if (!local && !remote) {
     return op(path, "skip", "本地和云端都不存在", false, local, remote, base);
@@ -43,6 +47,9 @@ function decide(
   if (!base) {
     if (local && !remote) {
       return op(path, local.type === "folder" ? "mkdir-remote" : "upload", "本地新增，云端不存在", false, local, remote, base);
+    }
+    if (preferLocal && local && remote && !sameContent(local, remote)) {
+      return op(path, local.type === "folder" ? "mkdir-remote" : "upload", "local save changed this path, prefer local", false, local, remote, base, true);
     }
     if (!local && remote) {
       return op(path, remote.type === "folder" ? "mkdir-local" : "download", "云端新增，本地不存在", false, local, remote, base);
@@ -60,6 +67,16 @@ function decide(
   const remoteChanged = hasChanged(remote, base.remote);
   const localDeleted = Boolean(base.local && !local);
   const remoteDeleted = Boolean(base.remote && !remote);
+
+  if (preferLocal && localChanged && local) {
+    return op(path, local.type === "folder" ? "mkdir-remote" : "upload", "local save changed this path, prefer local", false, local, remote, base, remoteChanged);
+  }
+
+  if (preferLocal && localDeleted) {
+    return settings.enableDeleteSync
+      ? op(path, "delete-remote", "local save deleted this path, prefer local", true, local, remote, base)
+      : op(path, "skip", "local save deleted this path but delete sync is disabled", false, local, remote, base);
+  }
 
   if (!localChanged && !remoteChanged) {
     return op(path, "skip", "两边都未变化", false, local, remote, base);
@@ -82,6 +99,9 @@ function decide(
   }
 
   if (remoteChanged && !localChanged && remote) {
+    if (isMetadataOnlyChange(remote, base.remote)) {
+      return op(path, "adopt", "云端仅元数据时间变化，更新同步基准", false, local, remote, base);
+    }
     return op(path, remote.type === "folder" ? "mkdir-local" : "download", "云端变化，本地未变化", false, local, remote, base);
   }
 
@@ -138,10 +158,26 @@ function sameContent(a: SyncEntity, b: SyncEntity): boolean {
   if (a.type !== b.type) {
     return false;
   }
+  if (a.type === "folder") {
+    return true;
+  }
   if (isSha1(a.hash) && isSha1(b.hash)) {
     return a.hash.toUpperCase() === b.hash.toUpperCase();
   }
   return a.size === b.size && Math.floor(a.mtime / 1000) === Math.floor(b.mtime / 1000);
+}
+
+function isMetadataOnlyChange(current: SyncEntity, base: SyncEntity | undefined): boolean {
+  if (!base || current.type !== base.type) {
+    return false;
+  }
+  if (current.type === "folder") {
+    return true;
+  }
+  if (isSha1(current.hash) && isSha1(base.hash)) {
+    return current.hash.toUpperCase() === base.hash.toUpperCase();
+  }
+  return current.size === base.size;
 }
 
 function isSha1(value: string | undefined): value is string {
@@ -155,13 +191,27 @@ function op(
   destructive: boolean,
   local?: SyncEntity,
   remote?: SyncEntity,
-  base?: SyncBaseRecord
+  base?: SyncBaseRecord,
+  archiveRemoteBeforeWrite = false
 ): SyncOperation {
-  return { path, kind, reason, destructive, local, remote, base };
+  return { path, kind, reason, destructive, archiveRemoteBeforeWrite, local, remote, base };
 }
 
 function mapByPath(items: SyncEntity[]): Record<string, SyncEntity> {
   return Object.fromEntries(items.map((item) => [item.path, item]));
+}
+
+function normalizedPathSet(paths: string[] | undefined): string[] {
+  return (paths ?? [])
+    .map((path) => path.replace(/\\/g, "/").replace(/^\/+/g, "").replace(/\/+$/g, ""))
+    .filter((path) => path.length > 0);
+}
+
+function isInScopes(path: string, scopes: string[]): boolean {
+  if (scopes.length === 0) {
+    return true;
+  }
+  return scopes.some((scope) => path === scope || path.startsWith(`${scope}/`));
 }
 
 function summarize(operations: SyncOperation[]): SyncPlan["summary"] {
@@ -170,7 +220,7 @@ function summarize(operations: SyncOperation[]): SyncPlan["summary"] {
     download: operations.filter((op) => op.kind === "download" || op.kind === "mkdir-local").length,
     deleteLocal: operations.filter((op) => op.kind === "delete-local").length,
     deleteRemote: operations.filter((op) => op.kind === "delete-remote").length,
-    conflicts: operations.filter((op) => op.kind === "merge-markdown" || op.kind === "duplicate-conflict").length,
+    conflicts: operations.filter((op) => op.kind === "merge-markdown" || op.kind === "duplicate-conflict" || op.archiveRemoteBeforeWrite).length,
     skipped: operations.filter((op) => op.kind === "skip").length
   };
 }

@@ -23,5 +23,8 @@
     "tslib": "^2.6.3",
     "typescript": "^5.5.4",
     "vitest": "^2.0.5"
+  },
+  "dependencies": {
+    "node-diff3": "^3.2.1"
   }
 }

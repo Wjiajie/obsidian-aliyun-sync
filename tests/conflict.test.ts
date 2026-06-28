@@ -12,10 +12,16 @@ describe("conflict resolver helpers", () => {
     expect(result).toEqual({ content: "b", conflicted: false });
   });
 
-  it("merges append-only markdown changes", () => {
-    const result = mergeMarkdown("a", "a\nlocal", "a\nremote");
+  it("merges non-overlapping markdown changes with diff3", () => {
+    const result = mergeMarkdown("a\nb\nc", "a\nlocal\nb\nc", "a\nb\nremote\nc");
     expect(result.conflicted).toBe(false);
-    expect(result.content).toBe("a\nlocal\nremote");
+    expect(result.content).toBe("a\nlocal\nb\nremote\nc");
+  });
+
+  it("keeps same-location append changes as a real diff3 conflict", () => {
+    const result = mergeMarkdown("a", "a\nlocal", "a\nremote");
+    expect(result.conflicted).toBe(true);
+    expect(result.content).toContain("`||||||| base`");
   });
 
   it("emits markdown-safe conflict markers", () => {

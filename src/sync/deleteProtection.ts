@@ -30,3 +30,33 @@ export function checkDeleteProtection(
   }
   return { ok: true };
 }
+
+export function checkDownloadProtection(
+  operations: SyncOperation[],
+  totalFiles: number,
+  hasSyncHistory: boolean,
+  settings: Pick<AliyunSyncSettings, "maxDownloadCount" | "maxDownloadPercentage">
+): DeleteProtectionResult {
+  if (!hasSyncHistory) {
+    return { ok: true };
+  }
+  const riskyDownloads = operations.filter((op) => op.kind === "download" && Boolean(op.base));
+  if (riskyDownloads.length === 0) {
+    return { ok: true };
+  }
+  if (riskyDownloads.length > settings.maxDownloadCount) {
+    return {
+      ok: false,
+      reason: `本次计划覆盖 ${riskyDownloads.length} 个已同步文件，超过上限 ${settings.maxDownloadCount}。这通常表示云端发生了批量改写，为保护本地文件已停止同步。`
+    };
+  }
+  const denominator = Math.max(totalFiles, 1);
+  const percentage = (riskyDownloads.length / denominator) * 100;
+  if (percentage > settings.maxDownloadPercentage) {
+    return {
+      ok: false,
+      reason: `本次覆盖已同步文件比例 ${percentage.toFixed(1)}%，超过上限 ${settings.maxDownloadPercentage}%。这通常表示云端发生了批量改写，为保护本地文件已停止同步。`
+    };
+  }
+  return { ok: true };
+}

@@ -1,5 +1,5 @@
 import type { TFile, Vault } from "obsidian";
-import { normalizePath } from "obsidian";
+import { normalizePath, TFolder } from "obsidian";
 import { shouldSkipAutoRenamedPath } from "../lib/autoRenamedDuplicate";
 import { hashBuffer } from "../lib/hash";
 import { matchesIgnore, normalizeVaultPath, parentPath } from "../lib/path";
@@ -22,6 +22,20 @@ export class LocalVaultAdapter implements LocalAdapter {
     const settings = this.getSettings();
     const files = this.vault.getFiles();
     const entries: LocalEntry[] = [];
+    for (const folder of this.vault.getAllLoadedFiles()) {
+      if (!(folder instanceof TFolder) || !folder.path) {
+        continue;
+      }
+      if (!this.shouldInclude(folder.path) || this.isAutoRenamedDuplicate(folder.path)) {
+        continue;
+      }
+      entries.push({
+        path: normalizeVaultPath(folder.path),
+        type: "folder",
+        size: 0,
+        mtime: 0
+      });
+    }
     for (const file of files) {
       if (!this.shouldInclude(file.path) || this.isAutoRenamedDuplicate(file.path)) {
         continue;
@@ -124,6 +138,12 @@ export class LocalVaultAdapter implements LocalAdapter {
       if (this.isAutoRenamedDuplicate(folderPath)) {
         continue;
       }
+      entries.push({
+        path: normalizeVaultPath(folderPath),
+        type: "folder",
+        size: 0,
+        mtime: 0
+      });
       entries.push(...(await this.listAdapterFolder(folderPath)));
     }
     return entries;

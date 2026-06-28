@@ -12,6 +12,14 @@ function file(path: string, hash: string, mtime = 1000): SyncEntity {
   return { path, type: "file", size: hash.length, mtime, hash };
 }
 
+function fileWithoutHash(path: string, size: number, mtime = 1000): SyncEntity {
+  return { path, type: "file", size, mtime };
+}
+
+function folder(path: string, mtime = 1000): SyncEntity {
+  return { path, type: "folder", size: 0, mtime };
+}
+
 function base(path: string, hash: string): SyncBaseRecord {
   const entity = file(path, hash);
   return {
@@ -53,6 +61,45 @@ describe("sync planner", () => {
     expect(plan.operations[0].kind).toBe("merge-markdown");
   });
 
+  it("uploads the saved path when save-triggered local content changed", () => {
+    const records = { "a.md": base("a.md", "base") };
+    const plan = buildSyncPlan(
+      [file("a.md", "local")],
+      [file("a.md", "remote")],
+      records,
+      settings,
+      {
+        changedPaths: ["a.md"],
+        preferLocalPaths: ["a.md"]
+      }
+    );
+
+    expect(plan.operations).toHaveLength(1);
+    expect(plan.operations[0].kind).toBe("upload");
+    expect(plan.operations[0].archiveRemoteBeforeWrite).toBe(true);
+    expect(plan.summary.conflicts).toBe(1);
+  });
+
+  it("scopes save-triggered plans to the changed paths", () => {
+    const records = {
+      "a.md": base("a.md", "base"),
+      "b.md": base("b.md", "base")
+    };
+    const plan = buildSyncPlan(
+      [file("a.md", "local"), file("b.md", "local")],
+      [file("a.md", "remote"), file("b.md", "remote")],
+      records,
+      settings,
+      {
+        changedPaths: ["a.md"],
+        preferLocalPaths: ["a.md"]
+      }
+    );
+
+    expect(plan.operations.map((operation) => operation.path)).toEqual(["a.md"]);
+    expect(plan.operations[0].kind).toBe("upload");
+  });
+
   it("deletes remote when local deleted and remote unchanged", () => {
     const records = { "a.md": base("a.md", "base") };
     const plan = buildSyncPlan([], [file("a.md", "base")], records, settings);
@@ -77,5 +124,50 @@ describe("sync planner", () => {
       settings
     );
     expect(plan.operations[0].kind).toBe("adopt");
+  });
+
+  it("does not download when remote only has a timestamp drift without a comparable hash", () => {
+    const local = file("a.md", "A".repeat(40), 1000);
+    const baseRemote = fileWithoutHash("a.md", 40, 1000);
+    const records: Record<string, SyncBaseRecord> = {
+      "a.md": {
+        path: "a.md",
+        local,
+        remote: baseRemote,
+        baseText: "base",
+        lastSuccessAt: 1,
+        deviceId: "d1"
+      }
+    };
+
+    const plan = buildSyncPlan(
+      [local],
+      [fileWithoutHash("a.md", 40, 5000)],
+      records,
+      settings
+    );
+
+    expect(plan.operations[0].kind).toBe("adopt");
+  });
+
+  it("ignores folder timestamp drift", () => {
+    const records: Record<string, SyncBaseRecord> = {
+      folder: {
+        path: "folder",
+        local: folder("folder", 1000),
+        remote: folder("folder", 1000),
+        lastSuccessAt: 1,
+        deviceId: "d1"
+      }
+    };
+
+    const plan = buildSyncPlan(
+      [folder("folder", 1000)],
+      [folder("folder", 5000)],
+      records,
+      settings
+    );
+
+    expect(plan.operations).toHaveLength(0);
   });
 });

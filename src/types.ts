@@ -1,5 +1,11 @@
 export type RemoteProviderKind = "aliyun-drive";
 export type InitialSyncConflictStrategy = "prefer-newer" | "prefer-local" | "prefer-remote" | "keep-both";
+export type SyncTrigger = "manual" | "startup" | "interval" | "save";
+
+export interface SyncRunOptions {
+  changedPaths?: string[];
+  preferLocalPaths?: string[];
+}
 
 export interface AuthState {
   accessToken: string;
@@ -26,10 +32,13 @@ export interface AliyunSyncSettings {
   enableDeleteSync: boolean;
   maxDeleteCount: number;
   maxDeletePercentage: number;
+  maxDownloadCount: number;
+  maxDownloadPercentage: number;
   markdownMergeSizeLimitBytes: number;
   deviceName: string;
   deviceId: string;
   advancedSettingsOpen: boolean;
+  showSyncCompletionNotice: boolean;
   auth?: AuthState;
   lastSyncSummary?: string;
 }
@@ -72,6 +81,7 @@ export interface SyncOperation {
   kind: SyncOperationKind;
   reason: string;
   destructive: boolean;
+  archiveRemoteBeforeWrite?: boolean;
   local?: SyncEntity;
   remote?: SyncEntity;
   base?: SyncBaseRecord;

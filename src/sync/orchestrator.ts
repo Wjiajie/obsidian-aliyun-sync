@@ -5,7 +5,7 @@ import { createRemoteMetadata, serializeRemoteMetadata } from "./remoteMetadata"
 import { buildSyncPlan } from "./planner";
 import { SyncExecutor, type SyncExecutionResult } from "./executor";
 import { SyncJournal } from "./journal";
-import type { AliyunSyncSettings, LocalAdapter, RemoteAdapter, SyncJournalData, SyncProgress } from "../types";
+import type { AliyunSyncSettings, LocalAdapter, RemoteAdapter, SyncJournalData, SyncProgress, SyncRunOptions, SyncTrigger } from "../types";
 
 export class SyncOrchestrator {
   private running = false;
@@ -20,7 +20,7 @@ export class SyncOrchestrator {
     private readonly reportProgress: (progress: SyncProgress) => void = () => undefined
   ) {}
 
-  async run(trigger: "manual" | "startup" | "interval" | "save"): Promise<SyncExecutionResult> {
+  async run(trigger: SyncTrigger, options: SyncRunOptions = {}): Promise<SyncExecutionResult> {
     if (this.running) {
       throw new Error("同步正在进行中");
     }
@@ -34,7 +34,7 @@ export class SyncOrchestrator {
       const filteredRemotes = remotes.filter((entry) => !matchesIgnore(entry.path, settings.ignorePatterns));
       this.reportProgress({ phase: "plan", message: "生成同步计划", current: 3, total: 5 });
       const journal = this.getJournal();
-      const plan = buildSyncPlan(locals, filteredRemotes, journal.records, settings);
+      const plan = buildSyncPlan(locals, filteredRemotes, journal.records, settings, options);
       const executor = new SyncExecutor(this.local, this.remote, journal, this.getSettings, this.reportProgress);
       const result = await executor.execute(plan);
       this.reportProgress({ phase: "metadata", message: "写入同步记录", current: 4, total: 5 });
@@ -52,7 +52,9 @@ export class SyncOrchestrator {
       ].join(" / ");
       await this.saveSummary(summary);
       this.reportProgress({ phase: "done", message: "同步完成", current: 5, total: 5 });
-      new Notice(`阿里云盘同步完成: ${summary}`);
+      if (settings.showSyncCompletionNotice) {
+        new Notice(`阿里云盘同步完成: ${summary}`);
+      }
       return result;
     } finally {
       this.running = false;
